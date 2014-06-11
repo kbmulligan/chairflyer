@@ -35,7 +35,7 @@ from pygame.locals import *
 debug = True
 paused = True
 mute = False
-res = (1000, 600) # resolution
+res = (1200, 600) # resolution
 borderWidth = 10
 bottomPad = 2
 fps = 60
@@ -43,6 +43,7 @@ title = 'chairflyer'
 timeInc = 9 # seconds
 
 waypointsFilename = "waypoints.txt"
+
 
 # player startup values
 startingPoints = 0
@@ -65,7 +66,6 @@ def gray (val):
     
 def recip (heading):
     return (heading + 180) % 360 
-
 
 def distance (a, b):
     return math.sqrt(abs(a[0] - b[0])**2 + abs(a[1] - b[1])**2)
@@ -154,10 +154,14 @@ class Aircraft:
     goal = None             # waypoint pos goal (x, y)
     goalHDG = 0
     goalKIAS = 210
+    goalDistance = 5        # distance to next waypoint when it will sequence to the next
     
     # most change possible over one time increment
     hdgChange = 1
     kiasChange = 1
+    
+    waypoints = []
+    
     
     def getPos(self):
         return (self.x, self.y)
@@ -301,8 +305,7 @@ class Aircraft:
             self.turnLeft()
         else:
             pass
-            
-            
+   
         # AIRSPEED
         # find the difference between current KIAS and goal KIAS         
         diffKIAS = self.getKIAS() - self.getGoalKIAS()
@@ -312,9 +315,7 @@ class Aircraft:
             self.slowDown()
         else:
             pass
-    
-    
-    
+
     def determineGoalHDG(self):
         # make sure there's a goal
         if self.goal == None:
@@ -347,8 +348,19 @@ class Aircraft:
     def getGoalKIAS(self):
         return self.goalKIAS
         
+    def loadWaypoints(self, newSet):
+        self.waypoints = list(newSet)
+        self.setGoal(self.waypoints[0].getPos())
         
+    def hasArrived(self):
+        return (distance(self.getPos(), self.getGoal()) < self.goalDistance)
+    
+    def arrive(self):
+        #move on to the next waypoint
+        if (self.waypoints):
+            self.setGoal(self.waypoints.pop(0).getPos())
         
+   
 class Waypoint:
 
     pos = (0,0)
@@ -387,16 +399,6 @@ game = Game()
 game.setLevel(1)
 player = Player(0,1)
 
-
-# aircraft init
-lead = Aircraft()
-lead.setIsLead(True)
-lead.setPos((res[0]/2, res[1]/2))
-
-wing = Aircraft()
-wing.setPos(lead.getWingPos())
-wing.setLead(lead)
-
 # waypoints init
 waypoints = []
 
@@ -410,13 +412,23 @@ def initWaypoints (filename):
             if line != "":
                 wpData = line
                 listOfValues = wpData.split(" ")
-                print int(listOfValues[0]), int(listOfValues[1])
                 x = int(listOfValues[0])
                 y = int(listOfValues[1])
                 waypoints.append(Waypoint((x,y)))
     wpf.close()
 
 initWaypoints(waypointsFilename)
+
+# aircraft init
+lead = Aircraft()
+lead.setIsLead(True)
+lead.setPos((res[0]/2, res[1]/2))
+lead.loadWaypoints(waypoints)
+
+wing = Aircraft()
+wing.setPos(lead.getWingPos())
+wing.setLead(lead)
+
 
 # input section
 def processInput():
@@ -549,7 +561,6 @@ def draw():
     drawText(windowSurfObj, 'Score: ' + str(player.getPoints()), (res[0]*3/5 , res[1] - (fontSize)))
     drawText(windowSurfObj, 'Level: ' + str(game.getLevel()), (res[0]*4/5 , res[1] - (fontSize)))
 
-
 def drawAircraft(wso, ac):
     # fuselage
     pygame.draw.aaline(wso, ac.color, ac.getNosePos(), ac.getTailPos(), False)
@@ -600,6 +611,17 @@ def progressTowardGoals():
     if not paused:
         lead.stepTowardGoal()
         wing.stepTowardGoal()
+        
+def adjustGoals():
+    global lead, waypoints
+    
+    if (lead.getGoal()):
+        if (lead.hasArrived()):
+            # success! plane reached its goal, move on to the next
+            lead.arrive()
+        elif ():
+            
+        
 
 def outOfBounds():
     player.takeLife()
@@ -637,10 +659,10 @@ while True:
     
     # do AI
     progressTowardGoals()
+    adjustGoals()
     
     # update positions
     updatePositions()
-    checkCollision()
     
     # draw
     draw()
