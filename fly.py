@@ -32,7 +32,7 @@ import pygame, sys, math
 from pygame.locals import *
 
 # main program config
-debug = False
+debug = True
 paused = True
 mute = False
 res = (1000, 600) # resolution
@@ -41,6 +41,8 @@ bottomPad = 2
 fps = 60
 title = 'chairflyer'
 timeInc = 9 # seconds
+
+waypointsFilename = "waypoints.txt"
 
 # player startup values
 startingPoints = 0
@@ -54,12 +56,19 @@ kiasChange = 1
 red = pygame.Color(255,0,0)
 green = pygame.Color(0,255,0)
 blue = pygame.Color(0,0,255)
+lightBlue = pygame.Color(200,200,255)
 white = pygame.Color(255,255,255)
 black = pygame.Color(0,0,0)
 
 def gray (val):
     return pygame.Color(val,val,val)
     
+def recip (heading):
+    return (heading + 180) % 360 
+
+
+def distance (a, b):
+    return math.sqrt(abs(a[0] - b[0])**2 + abs(a[1] - b[1])**2)
     
 # Class defs
 class Player:
@@ -235,7 +244,7 @@ class Aircraft:
             pass
         else:
             if self.getLead() != None:
-                self.setGoal(self.getLead().getPos())
+                self.setGoal(self.getLead().getWingPos())
                 
         dAng = self.hdg
         dRad = dAng * math.pi/180
@@ -245,8 +254,12 @@ class Aircraft:
         self.x = self.x + dX
         self.y = self.y + dY
         
-    def getWingOffset(self):
-        return (self.wingOffsetX, self.wingOffsetY)
+    def getWingPos(self):
+        dAng = 20 - self.hdg
+        dRad = dAng * math.pi/180
+        dX = math.sin(dRad) * self.wingOffsetY
+        dY = math.cos(dRad) * self.wingOffsetY
+        return (self.x + dX, self.y + dY)
         
     def setIsLead(self, isLd):
         self.isLead = isLd
@@ -273,26 +286,29 @@ class Aircraft:
         self.setKIAS(self.getKIAS() + self.kiasChange)
     
     def slowDown(self):
-        self.setKIAS(self.getKIAS() + self.kiasChange)
+        self.setKIAS(self.getKIAS() - self.kiasChange)
         
     def stepTowardGoal(self):
+        # HDG
         # find the difference between current HDG and goal HDG
         self.determineGoalHDG()
         
-        diffHDG = self.getHDG() - self.getGoalHDG()
-        
-        if (diffHDG < -1):
+        diffHDG = (self.getGoalHDG() - self.getHDG()) % 360
+         
+        if (diffHDG > 1 and diffHDG < 180):
             self.turnRight()
-        elif (diffHDG > 1):
+        elif (diffHDG < -1 or diffHDG > 180):
             self.turnLeft()
         else:
             pass
             
+            
+        # AIRSPEED
         # find the difference between current KIAS and goal KIAS         
         diffKIAS = self.getKIAS() - self.getGoalKIAS()
-        if (diffKIAS < -1):
+        if (diffKIAS < -0.1):
             self.speedUp()
-        elif (diffKIAS > 1):
+        elif (diffKIAS > 0.1):
             self.slowDown()
         else:
             pass
@@ -330,6 +346,27 @@ class Aircraft:
     
     def getGoalKIAS(self):
         return self.goalKIAS
+        
+        
+        
+class Waypoint:
+
+    pos = (0,0)
+    color = red
+    radius = 3
+    
+    def __init__(self, newPos):
+        self.pos = newPos
+        self.color = red
+        
+    def setPos(self, newPos):
+        self.pos = newPos
+        
+    def getPos(self):
+        return self.pos
+        
+    def getColor(self):
+        return self.color
     
 # setup
 
@@ -357,8 +394,29 @@ lead.setIsLead(True)
 lead.setPos((res[0]/2, res[1]/2))
 
 wing = Aircraft()
-wing.setPos((lead.getPos()[0] + wing.getWingOffset()[0], lead.getPos()[1] + wing.getWingOffset()[1]))
+wing.setPos(lead.getWingPos())
 wing.setLead(lead)
+
+# waypoints init
+waypoints = []
+
+def initWaypoints (filename):
+
+    wpf = open(filename, 'r')
+    if wpf == None:
+        print "Error: Could not open waypoint file."
+    else:
+        for line in wpf:
+            if line != "":
+                wpData = line
+                listOfValues = wpData.split(" ")
+                print int(listOfValues[0]), int(listOfValues[1])
+                x = int(listOfValues[0])
+                y = int(listOfValues[1])
+                waypoints.append(Waypoint((x,y)))
+    wpf.close()
+
+initWaypoints(waypointsFilename)
 
 # input section
 def processInput():
@@ -442,6 +500,7 @@ def keyLeft():
     global msg, lead
     msg = 'key left'
     lead.turnLeft()
+    
 def keyRight():
     global msg, lead
     msg = 'key right'
@@ -450,18 +509,16 @@ def keyRight():
 def keyUp():
     global msg, lead
     msg = 'key up'
-    lead.speedUp()
+    lead.setGoalKIAS(lead.getGoalKIAS() + 1)
     
 def keyDown():
     global msg, lead
     msg = 'key down'
-    lead.slowDown()
-    
-    
+    lead.setGoalKIAS(lead.getGoalKIAS() - 1)
+       
 def togglePause():
     global paused
     paused = not paused
-    # pygame.mouse.set_visible(paused)
     
 # graphics    
 def draw():
@@ -473,7 +530,10 @@ def draw():
     # draw border
     pygame.draw.rect(windowSurfObj, white, (borderWidth,borderWidth,res[0]-borderWidth*2,res[1]-(fontSize + bottomPad + borderWidth*2)), 1)
     
-    # draw aircraft
+    # draw waypoints
+    drawWaypoints(windowSurfObj, waypoints)
+    
+    # draw aircraft (last so they show up on top of everything)
     drawAircraft(windowSurfObj, lead)
     drawAircraft(windowSurfObj, wing)
     
@@ -502,6 +562,20 @@ def drawAircraft(wso, ac):
     pygame.draw.aaline(wso, ac.color, ac.getStabRoot(), ac.getRStabPos(), False)
     pygame.draw.aaline(wso, ac.color, ac.getStabRoot(), ac.getLStabPos(), False)
     
+    if ac.getGoal():
+        pygame.draw.circle(wso, red, (int(ac.getGoal()[0]), int(ac.getGoal()[1])), 5, 1)
+
+def drawWaypoints(wso, waypoints):
+    # draw legs
+    for leg in range(0, len(waypoints) - 1):
+        pygame.draw.aaline(wso, waypoints[leg].color, waypoints[leg].getPos(), waypoints[leg + 1].getPos(), False)
+    # draw waypoints
+    for wp in waypoints:
+        drawWaypoint(wso, wp)
+        
+def drawWaypoint(wso, wp):
+    pygame.draw.circle(wso, wp.color, wp.getPos(), wp.radius, 0)
+
 def drawBackground(wso):
     pygame.draw.circle(wso, gray(25), (res[0]/3 + 40, res[1]/3), 240)
     pygame.draw.circle(wso, gray(20), (res[0]*2/3, res[1]*2/3), 250)
@@ -527,9 +601,6 @@ def progressTowardGoals():
         lead.stepTowardGoal()
         wing.stepTowardGoal()
 
-def checkCollision():
-    global player
-
 def outOfBounds():
     player.takeLife()
     if not paused:
@@ -546,7 +617,6 @@ def nextLevel():
 
     if not paused:
         togglePause()
-
 
 def resetGame():
     global game, player
