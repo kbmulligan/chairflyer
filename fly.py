@@ -28,19 +28,19 @@
 #
 #########################
 
-import pygame, sys, math
+import pygame, sys, math, random
 from pygame.locals import *
 
 # main program config
 debug = True
 paused = True
 mute = False
-res = (1200, 600) # resolution
+res = (1366, 768) # resolution
 borderWidth = 10
 bottomPad = 2
 fps = 60
 title = 'chairflyer'
-timeInc = 9 # seconds
+timeInc = 3 # seconds
 
 waypointsFilename = "waypoints.txt"
 
@@ -48,10 +48,6 @@ waypointsFilename = "waypoints.txt"
 # player startup values
 startingPoints = 0
 startingLives = 5
-
-# control values
-hdgChange = 1
-kiasChange = 1
 
 # color presets
 red = pygame.Color(255,0,0)
@@ -145,11 +141,12 @@ class Aircraft:
     wgRoot = 0.2           # given in proportion of length from nose to tail
     stabRoot = 0.8         # given in proportion of length from nose to tail
     
-    color = white
+    color = lightBlue
     
     # state
     isLead = False
     lead = None
+    flyingPosition = 'lead'
     
     goal = None             # waypoint pos goal (x, y)
     goalHDG = 0
@@ -161,7 +158,6 @@ class Aircraft:
     kiasChange = 1
     
     waypoints = []
-    
     
     def getPos(self):
         return (self.x, self.y)
@@ -248,8 +244,11 @@ class Aircraft:
             pass
         else:
             if self.getLead() != None:
-                self.setGoal(self.getLead().getWingPos())
-                
+                if self.flyingPosition == 'wing':
+                    self.setGoal(self.getLead().getWingPos())
+                if self.flyingPosition == 'element lead':
+                    self.setGoal(self.getLead().getElementLeadPos())
+                    
         dAng = self.hdg
         dRad = dAng * math.pi/180
         dX = math.sin(dRad) * self.getGS()/3600 * time
@@ -265,11 +264,21 @@ class Aircraft:
         dY = math.cos(dRad) * self.wingOffsetY
         return (self.x + dX, self.y + dY)
         
+    def getElementLeadPos(self):
+        dAng = 0 - self.hdg
+        dRad = dAng * math.pi/180
+        dX = math.sin(dRad) * self.wingOffsetY * 2
+        dY = math.cos(dRad) * self.wingOffsetY * 2 
+        return (self.x + dX, self.y + dY)
+        
     def setIsLead(self, isLd):
         self.isLead = isLd
 
     def setLead(self, newLd):
         self.lead = newLd
+        
+    def getIsLead(self):
+        return self.isLead
         
     def getLead(self):
         return self.lead
@@ -307,6 +316,16 @@ class Aircraft:
             pass
    
         # AIRSPEED
+        # determine distance to goal in order to determine target KIAS
+        if self.getGoal() and not self.getIsLead():
+            distToGoal = distance(self.getPos(), self.getGoal())
+            if (distToGoal < self.length/10):
+                self.setGoalKIAS(self.getGoalKIAS())
+            elif (distToGoal > self.length/2):
+                self.setGoalKIAS(self.getGoalKIAS() + 15)
+            else:
+                self.setGoalKIAS(self.getLead().getKIAS() + 5)
+            
         # find the difference between current KIAS and goal KIAS         
         diffKIAS = self.getKIAS() - self.getGoalKIAS()
         if (diffKIAS < -0.1):
@@ -359,7 +378,21 @@ class Aircraft:
         #move on to the next waypoint
         if (self.waypoints):
             self.setGoal(self.waypoints.pop(0).getPos())
+        else:
+            self.addWaypoint(randomWaypoint())
+            self.arrive()
+    
+    def addWaypoint(self, wp):
+        self.waypoints.append(wp)
         
+    def getWaypoints(self):
+        return self.waypoints
+        
+    def getFlyingPosition(self):
+        return self.flyingPosition
+        
+    def setFlyingPosition(self, newpos):
+        self.flyingPosition = newpos
    
 class Waypoint:
 
@@ -385,7 +418,7 @@ class Waypoint:
 pygame.init()
 fpsClock = pygame.time.Clock()
 
-windowSurfObj = pygame.display.set_mode(res)
+windowSurfObj = pygame.display.set_mode(res, pygame.FULLSCREEN)
 pygame.display.set_caption(title)
 
 
@@ -401,6 +434,10 @@ player = Player(0,1)
 
 # waypoints init
 waypoints = []
+
+def randomWaypoint():
+    random.seed()
+    return Waypoint((random.randint(0,res[0]), random.randint(0,res[1])))
 
 def initWaypoints (filename):
 
@@ -428,6 +465,19 @@ lead.loadWaypoints(waypoints)
 wing = Aircraft()
 wing.setPos(lead.getWingPos())
 wing.setLead(lead)
+wing.setFlyingPosition('wing')
+
+el = Aircraft()
+el.setPos(lead.getElementLeadPos())
+el.setLead(lead)
+el.setFlyingPosition('element lead')
+
+num4 = Aircraft()
+num4.setPos(el.getWingPos())
+num4.setLead(el)
+num4.setFlyingPosition('wing')
+
+
 
 
 # input section
@@ -490,7 +540,7 @@ def leftClick(pos):
     global msg, lead
     msg = 'left click'
     
-    lead.setGoal(pos)
+    lead.addWaypoint(Waypoint(pos))
 
 def rightClick(pos):
     global msg
@@ -544,10 +594,13 @@ def draw():
     
     # draw waypoints
     drawWaypoints(windowSurfObj, waypoints)
+    drawWaypoints(windowSurfObj, lead.getWaypoints())
     
     # draw aircraft (last so they show up on top of everything)
     drawAircraft(windowSurfObj, lead)
     drawAircraft(windowSurfObj, wing)
+    drawAircraft(windowSurfObj, el)
+    drawAircraft(windowSurfObj, num4)
     
     # debug status
     if debug:
@@ -580,10 +633,16 @@ def drawWaypoints(wso, waypoints):
     # draw legs
     for leg in range(0, len(waypoints) - 1):
         pygame.draw.aaline(wso, waypoints[leg].color, waypoints[leg].getPos(), waypoints[leg + 1].getPos(), False)
+    
+    # leg from goal to next wp
+    if lead.getWaypoints() != []:
+        pygame.draw.aaline(wso, red, lead.getWaypoints()[0].getPos(), lead.getGoal(), False)
+        drawWaypoint(wso, Waypoint(lead.getGoal()))
+        
     # draw waypoints
     for wp in waypoints:
         drawWaypoint(wso, wp)
-        
+            
 def drawWaypoint(wso, wp):
     pygame.draw.circle(wso, wp.color, wp.getPos(), wp.radius, 0)
 
@@ -599,18 +658,22 @@ def drawText(wso, string, coords):
     wso.blit(textSurfObj, textRectObj)
 
 def updatePositions():
-    global lead, wing
+    global lead, wing, el
     
     if not paused:
         lead.updatePos(timeInc)
         wing.updatePos(timeInc)
+        el.updatePos(timeInc)
+        num4.updatePos(timeInc)
 
 def progressTowardGoals():
-    global lead, wing
+    global lead, wing, el
     
     if not paused:
         lead.stepTowardGoal()
         wing.stepTowardGoal()
+        el.stepTowardGoal()
+        num4.stepTowardGoal()
         
 def adjustGoals():
     global lead, waypoints
@@ -619,10 +682,9 @@ def adjustGoals():
         if (lead.hasArrived()):
             # success! plane reached its goal, move on to the next
             lead.arrive()
-        elif ():
-            
+        else:
+            pass
         
-
 def outOfBounds():
     player.takeLife()
     if not paused:

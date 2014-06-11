@@ -1,4 +1,4 @@
 chairflyer
 ==========
 
-Top down chairflying helper
+Top-down chairflying helper
